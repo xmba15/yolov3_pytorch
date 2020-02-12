@@ -1,0 +1,12 @@
+name: bird
+channels:
+  - pytorch
+  - anaconda
+  - defaults
+dependencies:
+  - python >=3.6
+  - cudatoolkit=10.0
+  - cudnn=7.6.5
+  - pip
+  - pip:
+      - -r requirements.txt
