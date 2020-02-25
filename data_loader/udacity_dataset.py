@@ -67,9 +67,7 @@ class UdacityDataset(DatasetBase):
             image_dict[line[0]][1].append(class_idx_dict[label_name])
 
         self._image_paths = image_dict.keys()
-        self._image_paths = [
-            os.path.join(self._data_path, elem) for elem in self._image_paths
-        ]
+        self._image_paths = [os.path.join(self._data_path, elem) for elem in self._image_paths]
         self._targets = image_dict.values()
 
         zipped = list(zip(self._image_paths, self._targets))

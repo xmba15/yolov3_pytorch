@@ -4,11 +4,13 @@ import os
 import cv2
 import numpy as np
 import tqdm
-import multiprocessing
+import multiprocessing as mp
+from ctypes import c_int32
 from abc import abstractmethod
 
 
-_result_bboxes = []
+_counter = mp.Value(c_int32)
+_counter_lock = mp.Lock()
 
 
 class DatasetConfigBase(object):
@@ -43,6 +45,8 @@ class DatasetBase(object):
         shuffle=True,
         normalize_bbox=False,
         bbox_transformer=None,
+        multiscale=False,
+        resize_after_batch_num=10,
     ):
         super(DatasetBase, self).__init__()
         assert os.path.isdir(data_path)
@@ -58,6 +62,18 @@ class DatasetBase(object):
         self._bbox_transformer = bbox_transformer
         self._image_paths = []
         self._targets = []
+
+        self._batch_count = 0
+        self._multiscale = multiscale
+        self._resize_after_batch_num = resize_after_batch_num
+
+    @property
+    def classes(self):
+        return self._classes
+
+    @property
+    def colors(self):
+        return self._colors
 
     @property
     def num_classes(self):
@@ -92,25 +108,17 @@ class DatasetBase(object):
         all_bboxes = all_bboxes.astype(np.int64)
         all_category_ids = all_category_ids.astype(np.int64)
 
-        return DatasetBase.visualize_one_image_util(
-            image, self._classes, self._colors, all_bboxes, all_category_ids
-        )
+        return DatasetBase.visualize_one_image_util(image, self._classes, self._colors, all_bboxes, all_category_ids)
 
     @staticmethod
-    def visualize_one_image_util(
-        image, classes, colors, all_bboxes, all_category_ids
-    ):
+    def visualize_one_image_util(image, classes, colors, all_bboxes, all_category_ids):
         for (bbox, label) in zip(all_bboxes, all_category_ids):
             x_min, y_min, x_max, y_max = bbox
 
-            cv2.rectangle(
-                image, (x_min, y_min), (x_max, y_max), colors[label], 2
-            )
+            cv2.rectangle(image, (x_min, y_min), (x_max, y_max), colors[label], 2)
 
             label_text = classes[label]
-            label_size = cv2.getTextSize(
-                label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.35, 1
-            )
+            label_size = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.35, 1)
 
             cv2.rectangle(
                 image,
@@ -138,10 +146,7 @@ class DatasetBase(object):
 
         o_bboxes, o_category_ids = self._targets[idx]
 
-        o_bboxes = [
-            DatasetBase.authentize_bbox(o_height, o_width, bbox)
-            for bbox in o_bboxes
-        ]
+        o_bboxes = [DatasetBase.authentize_bbox(o_height, o_width, bbox) for bbox in o_bboxes]
 
         img = o_img
         bboxes = o_bboxes
@@ -151,11 +156,11 @@ class DatasetBase(object):
             if isinstance(self._transform, list):
                 for transform in self._transform:
                     img, bboxes, category_ids = transform(
-                        img, bboxes, category_ids, phase=self._phase
+                        image=img, bboxes=bboxes, labels=category_ids, phase=self._phase
                     )
             else:
                 img, bboxes, category_ids = self._transform(
-                    img, bboxes, category_ids, phase=self._phase
+                    image=img, bboxes=bboxes, labels=category_ids, phase=self._phase
                 )
 
             # use the height, width after transformation for normalization
@@ -166,12 +171,7 @@ class DatasetBase(object):
 
         if self._normalize_bbox:
             bboxes = [
-                [
-                    float(bbox[0]) / width,
-                    float(bbox[1]) / height,
-                    float(bbox[2]) / width,
-                    float(bbox[3]) / height,
-                ]
+                [float(bbox[0]) / width, float(bbox[1]) / height, float(bbox[2]) / width, float(bbox[3]) / height,]
                 for bbox in bboxes
             ]
 
@@ -182,39 +182,83 @@ class DatasetBase(object):
         return img, targets
 
     def _process_one_image(self, idx):
-        global _result_bboxes
         abs_image_path = self._image_paths[idx]
         o_img = cv2.imread(abs_image_path)
         o_height, o_width, _ = o_img.shape
 
         o_bboxes, _ = self._targets[idx]
 
-        o_bboxes = [
-            DatasetBase.authentize_bbox(o_height, o_width, bbox)
-            for bbox in o_bboxes
-        ]
+        o_bboxes = [DatasetBase.authentize_bbox(o_height, o_width, bbox) for bbox in o_bboxes]
 
         o_bboxes = np.array(o_bboxes)
         widths = (o_bboxes[:, 2] - o_bboxes[:, 0]) / o_width
         heights = (o_bboxes[:, 3] - o_bboxes[:, 1]) / o_height
         normalized_dimensions = [[w, h] for w, h in zip(widths, heights)]
 
-        _result_bboxes += normalized_dimensions
+        with _counter_lock:
+            _counter.value += 1
 
-    def get_all_normalized_boxes(
-        self, num_processes=multiprocessing.cpu_count()
-    ):
-        global _result_bboxes
+        return normalized_dimensions
 
-        with multiprocessing.Pool(num_processes) as p:
-            r = list(
-                tqdm.tqdm(
-                    p.imap(self._process_one_image, range(self.__len__())),
-                    total=self.__len__(),
-                )
-            )
+    def get_all_normalized_boxes(self, num_processes=mp.cpu_count()):
+        import functools
 
-        return np.array(_result_bboxes)
+        _process_len = self.__len__()
+
+        pbar = tqdm.tqdm(total=_process_len)
+
+        result_bboxes = None
+        with mp.Pool(num_processes) as p:
+            future = p.map_async(self._process_one_image, range(_process_len))
+            while not future.ready():
+                if _counter.value != 0:
+                    with _counter_lock:
+                        increment = _counter.value
+                        _counter.value = 0
+                    pbar.update(n=increment)
+
+            result_bboxes = future.get()
+            result_bboxes = functools.reduce(lambda x, y: x + y, result_bboxes)
+
+        pbar.close()
+        return np.array(result_bboxes)
+
+    def _process_one_image_to_get_size(self, idx):
+        abs_image_path = self._image_paths[idx]
+        o_img = cv2.imread(abs_image_path)
+        o_height, o_width, _ = o_img.shape
+        o_size = o_height * o_width
+        o_bboxes, _ = self._targets[idx]
+
+        cur_sizes = []
+        for (x1, y1, x2, y2) in o_bboxes:
+            cur_sizes.append(np.sqrt((x2 - x1) * (y2 - y1) * 1.0 / o_size))
+
+        return cur_sizes
+
+    def size_distribution(self, num_processes=mp.cpu_count()):
+
+        import functools
+
+        _process_len = self.__len__()
+
+        pbar = tqdm.tqdm(total=_process_len)
+
+        result_bboxes = None
+        with mp.Pool(num_processes) as p:
+            future = p.map_async(self._process_one_image_to_get_size, range(_process_len))
+            while not future.ready():
+                if _counter.value != 0:
+                    with _counter_lock:
+                        increment = _counter.value
+                        _counter.value = 0
+                    pbar.update(n=increment)
+
+            result_bboxes = future.get()
+            result_bboxes = functools.reduce(lambda x, y: x + y, result_bboxes)
+
+        pbar.close()
+        return np.array(result_bboxes)
 
     @staticmethod
     def authentize_bbox(o_height, o_width, bbox):
@@ -258,6 +302,72 @@ class DatasetBase(object):
         import re
 
         pattern = r"([0-9]+)"
-        return [
-            int(c) if c.isdigit() else c.lower() for c in re.split(pattern, s)
-        ]
+        return [int(c) if c.isdigit() else c.lower() for c in re.split(pattern, s)]
+
+    @staticmethod
+    def get_all_files_with_format_from_path(dir_path, suffix_format, use_human_sort=True):
+        import os
+
+        all_files = [elem for elem in os.listdir(dir_path) if elem.endswith(suffix_format)]
+        all_files.sort(key=DatasetBase.human_sort)
+
+        return all_files
+
+    def od_collate_fn(self, batch):
+        import torch
+        import numpy as np
+
+        def _xywh_to_cxcywh(bbox):
+            bbox[..., 0] += bbox[..., 2] / 2
+            bbox[..., 1] += bbox[..., 3] / 2
+            return bbox
+
+        def _xyxy_to_cxcywh(bbox):
+            bbox[..., 2] -= bbox[..., 0]
+            bbox[..., 3] -= bbox[..., 1]
+            return _xywh_to_cxcywh(bbox)
+
+        if (
+            self._multiscale
+            and (self._batch_count + 1) % self._resize_after_batch_num == 0
+            and self._transform is not None
+        ):
+            if isinstance(self._transform, list):
+                for i in range(len(self._transform)):
+                    self._transform[i].update_size()
+            else:
+                self._transform.update_size()
+
+        images = []
+        labels = []
+        lengths = []
+        labels_with_tail = []
+        max_num_obj = 0
+
+        for image, label in batch:
+            image = np.transpose(image, (2, 1, 0))
+            image = np.expand_dims(image, axis=0)
+            images.append(image)
+
+            # xmin,ymin,xmax,ymax to xcenter,ycenter,width,height
+            labels.append(_xyxy_to_cxcywh(label))
+
+            length = label.shape[0]
+            lengths.append(length)
+            max_num_obj = max(max_num_obj, length)
+
+        for label in labels:
+            num_obj = label.shape[0]
+            zero_tail = np.zeros((max_num_obj - num_obj, label.shape[1]), dtype=float)
+            label_with_tail = np.concatenate([label, zero_tail], axis=0)
+            labels_with_tail.append(torch.FloatTensor(label_with_tail))
+
+        images = np.concatenate(images, axis=0)
+
+        image_tensor = torch.FloatTensor(images)
+        label_tensor = torch.stack(labels_with_tail)
+        length_tensor = torch.tensor(lengths)
+
+        self._batch_count += 1
+
+        return image_tensor, label_tensor, length_tensor
