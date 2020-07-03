@@ -177,7 +177,7 @@ if __name__ == "__main__":
         required=True,
         type=str,
         help="name of the dataset to use",
-        choices=["bird_dataset", "switch_dataset"],
+        choices=["bird_dataset", "switch_dataset", "wheat_dataset"],
     )
     parser.add_argument("--random_seed", type=int, default=12)
     parser.add_argument("--num_workers", type=int, default=4)

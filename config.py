@@ -3,7 +3,7 @@
 import os
 import logging
 from dataset_params import dataset_params
-from data_loader import BirdDataset, UdacityDataset, VOCDataset, COCODataset, SwitchDataset
+from data_loader import BirdDataset, UdacityDataset, VOCDataset, COCODataset, SwitchDataset, WheatDataset
 
 
 _CURRENT_DIR = os.path.dirname(os.path.realpath(__file__))
@@ -16,6 +16,7 @@ class Config(object):
         "voc_dataset": VOCDataset,
         "coco_dataset": COCODataset,
         "switch_dataset": SwitchDataset,
+        "wheat_dataset": WheatDataset,
     }
 
     DATASET_PARAMS = dataset_params

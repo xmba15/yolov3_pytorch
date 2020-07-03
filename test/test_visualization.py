@@ -29,6 +29,7 @@ def main(args):
     DatasetClass = dt_config.DATASETS[args.dataset]
 
     dataset = DatasetClass(data_path=dt_config.DATA_PATH)
+    print("length of the dataset: {}".format(len(dataset)))
 
     assert args.idx < len(dataset)
     img = dataset.visualize_one_image(args.idx)

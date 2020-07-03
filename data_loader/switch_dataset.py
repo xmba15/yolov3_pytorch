@@ -25,7 +25,7 @@ _switch_config = SwitchDatasetConfig()
 
 
 class SwitchDataset(DatasetBase):
-    __name__ = "bird_dataset"
+    __name__ = "switch_dataset"
 
     def __init__(
         self,
