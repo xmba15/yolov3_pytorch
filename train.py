@@ -173,7 +173,11 @@ if __name__ == "__main__":
     parser.add_argument("--resize_after_batch_num", type=int, default=10)
     parser.add_argument("--snapshot", type=str, help="path to snapshot weights")
     parser.add_argument(
-        "--dataset", required=True, type=str, help="name of the dataset to use", choices=["bird_dataset"]
+        "--dataset",
+        required=True,
+        type=str,
+        help="name of the dataset to use",
+        choices=["bird_dataset", "switch_dataset"],
     )
     parser.add_argument("--random_seed", type=int, default=12)
     parser.add_argument("--num_workers", type=int, default=4)
