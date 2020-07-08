@@ -44,8 +44,9 @@ def main(args):
 
     import onnx
 
-    mp = onnx.load("output.onnx")
+    mp = onnx.load(args.onnx_weight_file)
     mp.graph.input[0].type.tensor_type.shape.dim[0].dim_param = "None"
+    mp.graph.output[0].type.tensor_type.shape.dim[0].dim_param = "None"
     onnx.save(mp, "output.onnx")
 
 
