@@ -15,11 +15,11 @@ except Exception as e:
 
 def main():
     data_path = os.path.join(_CURRENT_DIR, "../data")
-    file_id = "1FGF11ptbce9QY7f6z3yTALQVfoOudzhA"
+    file_id = "16IQjiGu-jl2oTqr5wsp9MmJxtQiuyIWq"
     destination = os.path.join(data_path, "bird_dataset.zip")
     if not os.path.isfile(destination) and not os.path.isdir(os.path.join(data_path, "bird_dataset")):
         download_file_from_google_drive(file_id, destination)
-        os.system("cd {} && mkdir -p bird_dataset && unzip bird_dataset.zip -d bird_dataset".format(data_path))
+        os.system("cd {} && unzip bird_dataset.zip".format(data_path))
 
 
 if __name__ == "__main__":
